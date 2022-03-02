@@ -1,0 +1,1 @@
+gcc -m64 -std=gnu11 -g -pthread -D DEBUG create_context.o restore_context.o restore_context_args.o vec.h vec.c sync_primitives.c sync_primitives.h fiber_scheduler.h fiber_scheduler.c fiber_assemblylink.c -o fibers
