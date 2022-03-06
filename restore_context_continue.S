@@ -1,6 +1,6 @@
-.type restore_context, @function
-.global restore_context
-restore_context:
+.type restore_context_continue, @function
+.global restore_context_continue
+restore_context_continue:
   # Should return to the address set with {get, swap}_context.
   #movq 8*0(%rdi), %r8
 
@@ -18,10 +18,9 @@ restore_context:
   # Push RIP to stack for RET.
   #pushq %r8
 
-  # direct call. ABI requires the stack to be 16-aligned during call.
-  # pushq destroys that.
-  call *(8*0)(%rdi)
-  #jmp *(8*0)(%rdi)
+  # Jump, since call would fuck the stack up
+  # if we are jumping midway back to function.
+  jmp *(8*0)(%rdi)
 
   # Return.
   xorl %eax, %eax

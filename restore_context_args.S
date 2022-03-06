@@ -22,7 +22,11 @@ restore_context_args:
   movq 8*10(%rdi), %rdi
 
   # direct call. ABI requires the stack to be 16-aligned during call.
-  call *(8*0)(%r8)
+  # Normally call pushes shit to stack. We can pad the stack with an useless value and jmp,
+  # which will help us later
+  pushq %r8
+  jmp *(8*0)(%r8)
+  //call *(8*0)(%r8)
 
   # Return.
   xorl %eax, %eax
