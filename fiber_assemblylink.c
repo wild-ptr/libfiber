@@ -6,6 +6,7 @@
 #include <time.h>
 #include <emmintrin.h>
 #include <unistd.h>
+#include <stdbool.h>
 #include "fiber_scheduler.h"
 
 
@@ -31,6 +32,7 @@ void foo_fiber_arg(void* arg)
     printf("Complex structure printout from fiber, param pass test:\n");
     printf("nums[3]: %i, nums[0]: %i, a: %c, b: %c, f:%f\n", fa->nums[3], fa->nums[0], fa->a, fa->b, fa->f);
     printf("Yielding! Should reschedule the same thread.\n");
+    usleep(1000 * 1000);
 
     fiber_yield();
 
@@ -54,11 +56,13 @@ int main()
     struct fiber_args fa = { .nums[3] = 5, .a = 'x', .b = 'y', .f = 42.420f };
 
     size_t i = 0;
-    while(true)
+    while(i < 15)
     {
         usleep(400 * 1000);
         ++i;
         fa.f = 69.0f + i;
+        fiber_schedule_arg(foo_fiber_arg, &fa, sizeof(fa));
+        fa.f = 0.0f + i;
         fiber_schedule_arg(foo_fiber_arg, &fa, sizeof(fa));
     }
     fiber_scheduler_free();

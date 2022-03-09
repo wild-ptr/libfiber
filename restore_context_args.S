@@ -1,9 +1,6 @@
 .type restore_context_args, @function
 .global restore_context_args
 restore_context_args:
-  # Should return to the address set with {get, swap}_context.
-  #movq 8*0(%rdi), %r8
-
   # Load new stack pointer.
   movq 8*1(%rdi), %rsp
 
@@ -16,18 +13,14 @@ restore_context_args:
   movq 8*7(%rdi), %r15
     
   #save rdi, will be needed to call.
-  movq %rdi, %r8
+  movq %rdi, %rax
 
   # Pass pointer to first function argument.
-  movq 8*10(%rdi), %rdi
+  movq %rsi, %rdi
 
-  # direct call. ABI requires the stack to be 16-aligned during call.
-  # Normally call pushes shit to stack. We can pad the stack with an useless value and jmp,
-  # which will help us later
-  pushq %r8
-  jmp *(8*0)(%r8)
-  //call *(8*0)(%r8)
+  # Invoke the target function.
+  callq *(8*0)(%rax)
 
-  # Return.
+  # Return. Never called.
   xorl %eax, %eax
   ret

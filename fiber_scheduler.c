@@ -8,6 +8,9 @@
 #include <stdatomic.h>
 #include <assert.h>
 #include <stdalign.h>
+#include <stdbool.h>
+
+#include "vec.h"
 
 #include "fiber_scheduler.h"
 #include "sync_primitives.h"
@@ -23,10 +26,11 @@ struct StackManager
 
 struct fiber_context
 {
+// control registers
     void* rip;
     void* rsp;
 
-
+// callee-saved registers
     void* rbx;
     void* rbp;
     void* r12;
@@ -34,10 +38,9 @@ struct fiber_context
     void* r14;
     void* r15;
 
-// argument passing on stack bookkeeping
-    void* arg; // heap
+// bookkeeping
+    void* arg;
     uint32_t arg_size;
-    void* rdi; // first arg address.
     bool first_run;
 };
 
@@ -72,14 +75,14 @@ thread_local void* tl_currently_running_stack;
     (((uintptr_t)(const void *)(POINTER)) % (BYTE_COUNT))
 
 extern void restore_context(struct fiber_context*);
-extern void restore_context_args(struct fiber_context*);
+extern void restore_context_args(struct fiber_context*, void* arg_loc);
 extern void restore_context_continue(struct fiber_context*);
 extern void create_context(struct fiber_context*);
 
 static void print_fiber_state(struct fiber_context* f)
 {
     printf("Fiber context printout:\n");
-    printf("rsp: %p\nrdi: %p\nrip:%p\n", f->rsp, f->rdi, f->rip);
+    printf("rsp: %p\nrip:%p\n", f->rsp, f->rip);
 }
 
 static void add_new_mem_area(struct StackManager* mgr)
@@ -186,7 +189,7 @@ static void fiber_dispatch(struct fiber_context* fiber)
         memcpy(stack_p_args, fiber->arg, fiber->arg_size);
 
         // %rdi passes the first (and only) argument, in this case a void*
-        fiber->rdi = (char*)fiber->rsp - fiber->arg_size;
+        void* arg_loc = (char*)fiber->rsp - fiber->arg_size;
 
         // align %rsp to 16 again after taking arg_size of the stack for ourselves.
         if(is_aligned(stack_p_args, 16))
@@ -208,7 +211,7 @@ static void fiber_dispatch(struct fiber_context* fiber)
 #ifdef DEBUG
         assert(is_aligned(stack_p_args, 16));
 #endif
-        restore_context_args(fiber);
+        restore_context_args(fiber, arg_loc);
     }
 }
 
@@ -232,8 +235,9 @@ static void pop_fiber_schedule_next()
     vector_remove(&g_scheduler.fibers_vec, size - 1);
     mtx_unlock(&g_scheduler.fibers_mtx);
 
-    // arg points to beginning of the stack really. Minus somethings.
-    tl_currently_running_stack = fiber.arg;
+    // Point to beginning of the stack - this information is saved in case the fiber finishes.
+    // Then this pointer will be added to free-list.
+    tl_currently_running_stack = fiber.arg + fiber.arg_size;
 
     fiber_dispatch(&fiber);
 }
@@ -244,18 +248,24 @@ void fiber_yield()
 
     struct fiber_context f = {0};
     create_context(&f);
-    f.rip = __builtin_return_address(0);
+    //f.rip = __builtin_return_address(0);
+    f.rip = &&restore_callee_saved_regs;
     vector_insert(&g_scheduler.fibers_vec, 0, f);
 
     mtx_unlock(&g_scheduler.fibers_mtx);
 
     pop_fiber_schedule_next();
+
+restore_callee_saved_regs:;
+    // after rescheduling we should end here. fiber_yield should restore callee-saved regs
+    // and return.
 }
 
 void fiber_finish()
 {
-    printf("This fiber is done!\n");
     // Permanently remove stack from list. Make it lost from history, but give back stack to free list.
+    printf("This fiber is done!\n");
+    //stack_manager_return_stack(&g_scheduler.stack_mgr, tl_currently_running_stack);
     pop_fiber_schedule_next();
 }
 
