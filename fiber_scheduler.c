@@ -194,13 +194,13 @@ static void fiber_dispatch(struct fiber_context* fiber)
         // align %rsp to 16 again after taking arg_size of the stack for ourselves.
         if(is_aligned(stack_p_args, 16))
         {
-            fiber->rsp = stack_p_args;
+            fiber->rsp = stack_p_args - 16;
         }
         else
         {
             // decrement by mod 16 to properly align.
             stack_p_args -= get_ptr_mod(stack_p_args, 16);
-            fiber->rsp = stack_p_args;
+            fiber->rsp = stack_p_args - 16;
         }
 
         // This only needs to be done once, during first fiber run.
@@ -215,9 +215,12 @@ static void fiber_dispatch(struct fiber_context* fiber)
     }
 }
 
-static void pop_fiber_schedule_next()
+static void pop_fiber_schedule_next(bool locked)
 {
-    mtx_lock(&g_scheduler.fibers_mtx);
+    if(!locked)
+    {
+        mtx_lock(&g_scheduler.fibers_mtx);
+    }
 
     size_t size = vector_size(g_scheduler.fibers_vec);
     if(size == 0)
@@ -248,13 +251,11 @@ void fiber_yield()
 
     struct fiber_context f = {0};
     create_context(&f);
-    //f.rip = __builtin_return_address(0);
-    f.rip = &&restore_callee_saved_regs;
+    f.rip = __builtin_return_address(0);
+    //f.rip = &&restore_callee_saved_regs;
     vector_insert(&g_scheduler.fibers_vec, 0, f);
 
-    mtx_unlock(&g_scheduler.fibers_mtx);
-
-    pop_fiber_schedule_next();
+    pop_fiber_schedule_next(true);
 
 restore_callee_saved_regs:;
     // after rescheduling we should end here. fiber_yield should restore callee-saved regs
@@ -266,14 +267,14 @@ void fiber_finish()
     // Permanently remove stack from list. Make it lost from history, but give back stack to free list.
     printf("This fiber is done!\n");
     //stack_manager_return_stack(&g_scheduler.stack_mgr, tl_currently_running_stack);
-    pop_fiber_schedule_next();
+    pop_fiber_schedule_next(false);
 }
 
 static void thread_initialize(int* idx)
 {
     tl_thread_idx = *idx;
     tl_currently_running_stack = NULL;
-    pop_fiber_schedule_next();
+    pop_fiber_schedule_next(false);
 }
 
 void fiber_scheduler_init(size_t stack_size)

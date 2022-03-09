@@ -31,12 +31,11 @@ void foo_fiber_arg(void* arg)
     struct fiber_args* fa = arg;
     printf("Complex structure printout from fiber, param pass test:\n");
     printf("nums[3]: %i, nums[0]: %i, a: %c, b: %c, f:%f\n", fa->nums[3], fa->nums[0], fa->a, fa->b, fa->f);
-    printf("Yielding! Should reschedule the same thread.\n");
-    usleep(1000 * 1000);
+    printf("!!!!!!!! Yielding!\n");
 
     fiber_yield();
 
-    printf("Rescheduled after yielding! in foo_fiber_arg!\n");
+    printf("!!!!!!!!!!!! Rescheduled after yielding! in foo_fiber_arg!\n");
     fiber_finish();
 }
 
