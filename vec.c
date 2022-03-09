@@ -5,6 +5,7 @@
 
 #include "vec.h"
 #include <string.h>
+#include <stdio.h>
 
 typedef struct vector_data vector_data;
 
@@ -100,6 +101,7 @@ void _vector_erase(vector* vec_addr, vec_type_t type_size, vec_size_t pos,
 
 void _vector_remove(vector* vec_addr, vec_type_t type_size, vec_size_t pos)
 {
+    printf("internal vector function: Removing element at position %lu\n", pos);
 	_vector_erase(vec_addr, type_size, pos, 1);
 }
 

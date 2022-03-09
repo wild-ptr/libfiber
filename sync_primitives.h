@@ -4,7 +4,7 @@
 
 // Fiber-safe spinlock which will not yield to OS.
 // This assumes a properly-initialized atomic_flag
-void sync_spinlock(atomic_flag* f);
+void sync_spinlock_noyield(atomic_flag* f);
 
 void sync_spinunlock(atomic_flag* f);
 

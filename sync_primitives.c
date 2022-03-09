@@ -1,6 +1,6 @@
 #include "sync_primitives.h"
 
-void sync_spinlock(atomic_flag* f)
+void sync_spinlock_noyield(atomic_flag* f)
 {
     // if test-and-set returns true it means we did not acquire lock. It was still locked.
     // when previous value was false, we have successfuly locked.

@@ -10,6 +10,8 @@
 #include <stdalign.h>
 #include <stdbool.h>
 
+#include <signal.h>
+
 #include "vec.h"
 
 #include "fiber_scheduler.h"
@@ -21,7 +23,7 @@ struct StackManager
     size_t size;
     size_t stack_size;
     char** free_list_vec;
-    atomic_flag free_list_mut;
+    mtx_t free_list_mut;
 };
 
 struct fiber_context
@@ -49,10 +51,10 @@ struct fiber_context
 // If not aligned to cacheline size, false sharing would occur.
 struct FiberScheduler
 {
-    thrd_t* phys_threads[FIBER_SCHEDULER_THREAD_COUNT];
+    thrd_t phys_threads[FIBER_SCHEDULER_THREAD_COUNT];
     struct StackManager stack_mgr;
     struct fiber_context* fibers_vec;
-    atomic_flag fibers_mut;
+    //atomic_flag fibers_mtx;
     mtx_t fibers_mtx;
     cnd_t fibers_cv;
 };
@@ -107,7 +109,8 @@ static void add_new_mem_area(struct StackManager* mgr)
 
 static void stack_manager_init(struct StackManager* mgr, size_t stack_size)
 {
-    atomic_flag_clear(&mgr->free_list_mut);
+    //atomic_flag_clear(&mgr->free_list_mut);
+    mtx_init(&mgr->free_list_mut, mtx_plain);
     mgr->stack_size = stack_size;
     mgr->memoryAreas_vec = vector_create();
     mgr->free_list_vec = vector_create();
@@ -127,7 +130,7 @@ static void stack_manager_free(struct StackManager* mgr)
 
 static char* stack_manager_get_free_stack(struct StackManager* mgr)
 {
-    sync_spinlock(&mgr->free_list_mut);
+    mtx_lock(&mgr->free_list_mut);
     size_t num_items = vector_size(mgr->free_list_vec);
 
     //printf("dumping stack manager free list:\n");
@@ -144,17 +147,18 @@ static char* stack_manager_get_free_stack(struct StackManager* mgr)
     }
 
     char* ret = mgr->free_list_vec[num_items - 1];
+    printf("vector removal from stackmgr\n");
     vector_remove(&mgr->free_list_vec, num_items - 1);
 
-    sync_spinunlock(&mgr->free_list_mut);
+    mtx_unlock(&mgr->free_list_mut);
     return ret;
 }
 
 static void stack_manager_return_stack(struct StackManager* mgr, char* stack)
 {
-    sync_spinlock(&mgr->free_list_mut);
+    mtx_lock(&mgr->free_list_mut);
     vector_add(&(mgr->free_list_vec), stack);
-    sync_spinunlock(&mgr->free_list_mut);
+    mtx_unlock(&mgr->free_list_mut);
 }
 
 #undef PREEMPTIVE_STACK_CNT
@@ -185,8 +189,13 @@ static void fiber_dispatch(struct fiber_context* fiber)
         // this path is only used for first-run, so remove the flag.
         fiber->first_run = false;
 
+        // fiber->rsp is raw stack we got from manager.
+        // calculate where will the args begin on that, and copy to that memory.
         char* stack_p_args = (char*)fiber->rsp - fiber->arg_size;
         memcpy(stack_p_args, fiber->arg, fiber->arg_size);
+
+        free(fiber->arg);
+        fiber->arg = NULL;
 
         // %rdi passes the first (and only) argument, in this case a void*
         void* arg_loc = (char*)fiber->rsp - fiber->arg_size;
@@ -203,37 +212,39 @@ static void fiber_dispatch(struct fiber_context* fiber)
             fiber->rsp = stack_p_args - 16;
         }
 
-        // This only needs to be done once, during first fiber run.
-        // The fiber->can be treated as no-arg fiber afterwards, so argument memory can be freed.
-        free(fiber->arg);
-        fiber->arg = NULL;
-
 #ifdef DEBUG
-        assert(is_aligned(stack_p_args, 16));
+        assert(is_aligned(fiber->rsp, 16));
 #endif
         restore_context_args(fiber, arg_loc);
     }
 }
 
-static void pop_fiber_schedule_next(bool locked)
+static void pop_fiber_schedule_next_after_finish()
 {
-    if(!locked)
-    {
-        mtx_lock(&g_scheduler.fibers_mtx);
-    }
-
+    mtx_lock(&g_scheduler.fibers_mtx);
     size_t size = vector_size(g_scheduler.fibers_vec);
-    if(size == 0)
+
+    while(size == 0)
     {
         printf("waiting for fibers to jump to, going to sleep.\n");
         cond_var_wait_f(&g_scheduler.fibers_cv, &g_scheduler.fibers_mtx, fiber_vector_check);
         size = vector_size(g_scheduler.fibers_vec); // Size needs to be recalculated
     }
-    printf("Woken up! Acquiring context at idx: %lu.\n", size);
 
-    // Pop context from vector, unlock mutex
-    // fiber context could hold information about whether there are args or not,
-    // and if so, pointer to arg memory.
+    struct fiber_context fiber = g_scheduler.fibers_vec[size - 1];
+    vector_remove(&g_scheduler.fibers_vec, size - 1);
+
+    mtx_unlock(&g_scheduler.fibers_mtx);
+
+    fiber_dispatch(&fiber);
+}
+
+static void pop_fiber_schedule_next_after_yield()
+{
+    // no lock, it was acquired in yield.
+    // if entering from yield, size is at least 1, since we just added one context.
+
+    size_t size = vector_size(g_scheduler.fibers_vec);
     struct fiber_context fiber = g_scheduler.fibers_vec[size - 1];
     vector_remove(&g_scheduler.fibers_vec, size - 1);
     mtx_unlock(&g_scheduler.fibers_mtx);
@@ -251,11 +262,13 @@ void fiber_yield()
 
     struct fiber_context f = {0};
     create_context(&f);
-    f.rip = __builtin_return_address(0);
-    //f.rip = &&restore_callee_saved_regs;
+    //f.rip = __builtin_return_address(0);
+    f.rip = &&restore_callee_saved_regs;
+
+    // this is very slow
     vector_insert(&g_scheduler.fibers_vec, 0, f);
 
-    pop_fiber_schedule_next(true);
+    pop_fiber_schedule_next_after_yield();
 
 restore_callee_saved_regs:;
     // after rescheduling we should end here. fiber_yield should restore callee-saved regs
@@ -267,19 +280,26 @@ void fiber_finish()
     // Permanently remove stack from list. Make it lost from history, but give back stack to free list.
     printf("This fiber is done!\n");
     //stack_manager_return_stack(&g_scheduler.stack_mgr, tl_currently_running_stack);
-    pop_fiber_schedule_next(false);
+    pop_fiber_schedule_next_after_finish();
 }
 
 static void thread_initialize(int* idx)
 {
     tl_thread_idx = *idx;
     tl_currently_running_stack = NULL;
-    pop_fiber_schedule_next(false);
+
+    // Blocking signals from OS.
+    sigset_t mask;
+    sigfillset(&mask);
+    assert(pthread_sigmask(SIG_BLOCK, &mask, NULL) == 0 && "failed to block signals");
+
+    pop_fiber_schedule_next_after_finish();
 }
 
 void fiber_scheduler_init(size_t stack_size)
 {
     mtx_init(&g_scheduler.fibers_mtx, mtx_plain);
+    //atomic_flag_clear(&g_scheduler.fibers_mtx);
     cnd_init(&g_scheduler.fibers_cv);
     g_scheduler.fibers_vec = vector_create();
 

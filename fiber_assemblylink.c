@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include "fiber_scheduler.h"
+#include "fifo_queue.h"
 
 
 void foo_fiber()
@@ -55,13 +56,11 @@ int main()
     struct fiber_args fa = { .nums[3] = 5, .a = 'x', .b = 'y', .f = 42.420f };
 
     size_t i = 0;
-    while(i < 15)
+    while(i < 9)
     {
-        usleep(400 * 1000);
+        //usleep(400 * 1000);
         ++i;
         fa.f = 69.0f + i;
-        fiber_schedule_arg(foo_fiber_arg, &fa, sizeof(fa));
-        fa.f = 0.0f + i;
         fiber_schedule_arg(foo_fiber_arg, &fa, sizeof(fa));
     }
     fiber_scheduler_free();

@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 // Compile-time settings.
-#define FIBER_SCHEDULER_THREAD_COUNT 4
+#define FIBER_SCHEDULER_THREAD_COUNT 1
 
 // Initialization
 void fiber_scheduler_init(size_t stack_size);
